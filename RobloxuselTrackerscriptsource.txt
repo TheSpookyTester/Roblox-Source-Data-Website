@@ -1,0 +1,156 @@
+import { useEffect, MutableRefObject, useRef } from 'react';
+import { eventStreamService } from 'core-roblox-utilities';
+import { getElementWidth, isElementInWindow } from '../utils/browserUtils';
+import parsingUtils from '../utils/parsingUtils';
+import { debounce } from '../utils/helperUtils';
+import { TGameData } from '../types/bedev1Types';
+import eventStreamConstants, {
+  EventStreamMetadata,
+  TCarouselGameImpressions,
+  SessionInfoType
+} from '../constants/eventStreamConstants';
+
+export type TGameImpressionCarouselTrackerRefs = {
+  carouselRef: MutableRefObject<HTMLElement | null>;
+  carouselScrollRef?: MutableRefObject<HTMLElement | null>;
+  tileRef: MutableRefObject<HTMLElement | null>;
+};
+
+export const useGameImpressionCarouselTracker = (
+  { carouselRef, carouselScrollRef, tileRef }: TGameImpressionCarouselTrackerRefs,
+  gameData: TGameData[] | undefined,
+  metaData: Pick<
+    TCarouselGameImpressions,
+    | EventStreamMetadata.SortPos
+    | EventStreamMetadata.GameSetTypeId
+    | EventStreamMetadata.Page
+    | SessionInfoType.HomePageSessionInfo
+    | SessionInfoType.DiscoverPageSessionInfo
+  >
+): VoidFunction => {
+  const gameDataRef = useRef<TGameData[] | undefined>(gameData);
+  const impressedRangeRef = useRef<[number, number] | undefined>(undefined);
+  const calculateCarouselVisibility = (carouselElement: HTMLElement | null): boolean => {
+    if (carouselElement) {
+      return isElementInWindow(carouselElement);
+    }
+    return false;
+  };
+
+  const calculateVisibleGameTiles = (
+    carouselElement?: HTMLElement | null,
+    carouselScrollElement?: HTMLElement | null,
+    tileElement?: HTMLElement | null
+  ): [number, number] | undefined => {
+    if (tileElement && carouselElement) {
+      const offset = carouselScrollElement
+        ? Math.abs(carouselScrollElement.offsetLeft)
+        : carouselElement.scrollLeft;
+
+      const { clientWidth: carouselDomRectWidth } = carouselElement;
+      const tileDomRectWidth = getElementWidth(tileElement);
+      const seenStartIndex = Math.round(offset / tileDomRectWidth);
+      const seenEndIndex = Math.round((offset + carouselDomRectWidth) / tileDomRectWidth) - 1;
+      return [seenStartIndex, seenEndIndex];
+    }
+
+    return undefined;
+  };
+
+  const updateImpressedRange = (sortedImpressedIndexes: number[]): void => {
+    if (impressedRangeRef.current === undefined) {
+      impressedRangeRef.current = [
+        sortedImpressedIndexes[0],
+        sortedImpressedIndexes[sortedImpressedIndexes.length - 1]
+      ];
+    } else {
+      const minRange =
+        impressedRangeRef.current[0] < sortedImpressedIndexes[0]
+          ? impressedRangeRef.current[0]
+          : sortedImpressedIndexes[0];
+      const maxRange =
+        impressedRangeRef.current[1] > sortedImpressedIndexes[sortedImpressedIndexes.length - 1]
+          ? impressedRangeRef.current[1]
+          : sortedImpressedIndexes[sortedImpressedIndexes.length - 1];
+      impressedRangeRef.current = [minRange, maxRange];
+    }
+  };
+  const sendEvent = () => {
+    // Calculate visibility
+    let sortedImpressedIndexes: number[] = [];
+    const isCarouselVisible = calculateCarouselVisibility(carouselRef.current);
+    const possibleCarouselVisibleTileRange = calculateVisibleGameTiles(
+      carouselRef.current,
+      carouselScrollRef?.current,
+      tileRef.current
+    );
+
+    // Retrieve Impressions Intersections
+    if (isCarouselVisible && possibleCarouselVisibleTileRange) {
+      sortedImpressedIndexes = parsingUtils.calculateImpressedIndexes(
+        impressedRangeRef.current,
+        possibleCarouselVisibleTileRange
+      );
+    }
+
+    // Trigger Event only where there are Unseen Tiles
+    if (sortedImpressedIndexes.length !== 0 && gameDataRef.current) {
+      const { current } = gameDataRef;
+      const parsedImpressedIndexes = sortedImpressedIndexes.filter(id => id < current.length);
+      if (parsedImpressedIndexes.length === 0) {
+        return;
+      }
+
+      updateImpressedRange(parsedImpressedIndexes);
+      const gameImpressionsParams = eventStreamConstants.gameImpressions({
+        [EventStreamMetadata.RootPlaceIds]: parsedImpressedIndexes.map(
+          index => current[index].placeId
+        ),
+        [EventStreamMetadata.UniverseIds]: parsedImpressedIndexes.map(
+          index => current[index].universeId
+        ),
+        [EventStreamMetadata.AdsPositions]: parsedImpressedIndexes.map(index =>
+          current[index].isSponsored ? 1 : 0
+        ),
+        [EventStreamMetadata.AbsPositions]: parsedImpressedIndexes,
+        ...metaData
+      });
+      eventStreamService.sendEvent(...gameImpressionsParams);
+    }
+  };
+
+  const [sendEventDebounced, cancelDebouncedEvent] = debounce(() => {
+    sendEvent();
+  });
+
+  const onCleanUp = () => {
+    cancelDebouncedEvent();
+    window.removeEventListener('scroll', sendEventDebounced);
+    window.removeEventListener('resize', sendEventDebounced);
+  };
+
+  useEffect(() => {
+    window.addEventListener('scroll', sendEventDebounced);
+    window.addEventListener('resize', sendEventDebounced);
+    return onCleanUp;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const currentCarouselRef = carouselRef.current;
+    currentCarouselRef?.addEventListener('scroll', sendEventDebounced);
+    return () => {
+      currentCarouselRef?.removeEventListener('scroll', sendEventDebounced);
+    };
+  }, [carouselRef, sendEventDebounced]);
+
+  useEffect(() => {
+    gameDataRef.current = gameData;
+    sendEvent();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameData]);
+
+  return sendEventDebounced;
+};
+
+export default useGameImpressionCarouselTracker;

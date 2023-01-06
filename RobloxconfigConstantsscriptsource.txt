@@ -1,0 +1,25 @@
+export const homePage = {
+  maxTilesPerCarouselPage: 6
+};
+
+export const gameDetailsPage = {
+  maxTilesPerCarouselPage: 6,
+  voiceLabelIndex: 3
+};
+
+export const common = {
+  maxTilesInGameImpressionsEvent: 25,
+  numberOfInGameIcons: 3,
+  numberOfInGameNames: 1,
+  numberOfGameTilesPerLoad: 60,
+  numberOfGamePassesPerLoad: 50,
+  keyBoardEventCode: {
+    enter: 'Enter'
+  }
+};
+
+export default {
+  homePage,
+  gameDetailsPage,
+  common
+};
