@@ -1,0 +1,317 @@
+import { EnvironmentUrls, CurrentUser } from 'Roblox';
+import angular from 'angular';
+import chatModule from '../chatModule';
+
+function chatService(
+  $q,
+  chatUtility,
+  httpService,
+  $log,
+  apiParamsInitialization,
+  conversationsUtility,
+  storageService
+) {
+  'ngInject';
+
+  const getConversations = function(conversationIds) {
+    const params = {
+      conversationIds
+    };
+    const url = EnvironmentUrls.chatApi + apiParamsInitialization.chatUrls.getConversations;
+    const urlConfig = {
+      url,
+      withCredentials: true,
+      retryable: true
+    };
+    return httpService.httpGet(urlConfig, params).then(function success(conversations) {
+      conversations.forEach(function(conversation) {
+        conversationsUtility.buildPinGameInConversation(conversation);
+      });
+      return conversations;
+    });
+  };
+
+  const shouldRetrieveNextMessages = function(conversation, data) {
+    // first message
+    if (!conversation || !conversation.chatMessages || conversation.chatMessages.length <= 0) {
+      return false;
+    }
+
+    for (let i = 0; i < data.length; i++) {
+      if (data[i].id === conversation.chatMessages[0].id) {
+        return false;
+      }
+    }
+
+    return true;
+  };
+  const getCacheData = function(cacheData) {
+    const deferred = $q.defer();
+    deferred.resolve(cacheData.data);
+    return deferred.promise;
+  };
+
+  return {
+    apiSets: {},
+
+    setParams() {
+      const chatDomain = EnvironmentUrls.chatApi;
+      this.apiSets.markAsReadApi = {
+        url: `${chatDomain}/v2/mark-as-read`,
+        retryable: false,
+        withCredentials: true
+      };
+      this.apiSets.markAsSeenApi = {
+        url: `${chatDomain}/v2/mark-as-seen`,
+        retryable: false,
+        withCredentials: true
+      };
+      this.apiSets.sendMessageApi = {
+        url: `${chatDomain}/v2/send-message`,
+        retryable: false,
+        withCredentials: true
+      };
+      this.apiSets.conversationsApi = {
+        url: `${chatDomain}/v2/get-conversations`,
+        retryable: true,
+        withCredentials: true
+      };
+      this.apiSets.userConversationsApi = {
+        url: `${chatDomain}/v2/get-user-conversations`,
+        retryable: true,
+        withCredentials: true
+      };
+      this.apiSets.getMessagesApi = {
+        url: `${chatDomain}/v2/get-messages`,
+        retryable: true,
+        withCredentials: true
+      };
+      this.apiSets.multiGetLatestMessagesApi = {
+        url: `${chatDomain}/v2/multi-get-latest-messages`,
+        retryable: true,
+        withCredentials: true
+      };
+      this.apiSets.getUnreadConversationCountApi = {
+        url: `${chatDomain}/v2/get-unread-conversation-count`,
+        retryable: true,
+        withCredentials: true
+      };
+      this.apiSets.startOneToOneConversationApi = {
+        url: `${chatDomain}/v2/start-one-to-one-conversation`,
+        retryable: true,
+        withCredentials: true
+      };
+      this.apiSets.startGroupConversationApi = {
+        url: `${chatDomain}/v2/start-group-conversation`,
+        retryable: false,
+        withCredentials: true
+      };
+      this.apiSets.addToConversationApi = {
+        url: `${chatDomain}/v2/add-to-conversation`,
+        retryable: true,
+        withCredentials: true
+      };
+      this.apiSets.removeFromConversationApi = {
+        url: `${chatDomain}/v2/remove-from-conversation`,
+        retryable: true,
+        withCredentials: true
+      };
+      this.apiSets.renameGroupConversationApi = {
+        url: `${chatDomain}/v2/rename-group-conversation`,
+        retryable: false,
+        withCredentials: true
+      };
+      this.apiSets.updateUserTypingStatusApi = {
+        url: `${chatDomain}/v2/update-user-typing-status`,
+        retryable: false,
+        withCredentials: true
+      };
+      this.apiSets.uiPerformanceTrackingApi = {
+        url: `${EnvironmentUrls.metricsApi}/v1/performance/send-measurement`,
+        retryable: false,
+        withCredentials: true
+      };
+    },
+
+    getMetaData() {
+      const params = {};
+      return httpService.httpGet(apiParamsInitialization.apiSets.getMetaData, params);
+    },
+
+    getUnreadConversationCount() {
+      return httpService.httpGet(this.apiSets.getUnreadConversationCountApi, null);
+    },
+
+    getUserConversations(pageNumberOfConversations, pageSizeOfConversations, friendsDict) {
+      const paramsOfConvs = {
+        pageNumber: pageNumberOfConversations,
+        pageSize: pageSizeOfConversations
+      };
+
+      let localStorageName = storageService.getStorageName(
+        storageService.chatDataName.getUserConversations,
+        paramsOfConvs
+      );
+      const cacheData = storageService.getChatDataFromLocalStorage(localStorageName);
+      if (cacheData) {
+        return getCacheData(cacheData, friendsDict);
+      }
+      return httpService
+        .httpGet(this.apiSets.userConversationsApi, paramsOfConvs)
+        .then(function(data) {
+          storageService.saveChatDataToLocalStorage(localStorageName, data);
+          return data;
+        });
+    },
+
+    getConversations,
+
+    addToConversation(participantUserIds, conversationId) {
+      const data = {
+        participantUserIds,
+        conversationId
+      };
+      return httpService.httpPost(this.apiSets.addToConversationApi, data);
+    },
+
+    removeFromConversation(participantUserId, conversationId) {
+      const data = {
+        participantUserId,
+        conversationId
+      };
+      return httpService.httpPost(this.apiSets.removeFromConversationApi, data);
+    },
+
+    startOneToOneConversation(participantUserId) {
+      const data = {
+        participantUserId
+      };
+      return httpService
+        .httpPost(this.apiSets.startOneToOneConversationApi, data)
+        .then(function(data) {
+          if (data) {
+            const { conversation } = data;
+            conversationsUtility.buildPinGameInConversation(conversation);
+            return conversation;
+          }
+        });
+    },
+
+    startGroupConversation(participantUserIds, title) {
+      const data = {
+        participantUserIds,
+        title
+      };
+      return httpService.httpPost(this.apiSets.startGroupConversationApi, data);
+    },
+
+    getMessages(conversationId, exclusiveStartMessageId, pageSize) {
+      const params = {
+        conversationId,
+        exclusiveStartMessageId,
+        pageSize
+      };
+
+      return httpService.httpGet(this.apiSets.getMessagesApi, params);
+    },
+
+    getMessagesByPageSize(
+      conversation,
+      exclusiveStartMessageId,
+      pageSize,
+      allData,
+      update,
+      messageReceiveStartTime
+    ) {
+      const chatService = this;
+      this.getMessages(conversation.id, exclusiveStartMessageId, pageSize).then(function(data) {
+        if (data && data.length > 0) {
+          const nextPageSize = pageSize * 2;
+          data.forEach(function(message) {
+            allData.push(message);
+          });
+
+          // repeat if all messages have not been retrieved nor reached max page size
+          if (
+            shouldRetrieveNextMessages(conversation, data) &&
+            nextPageSize <= chatUtility.dialogParams.pageSizeOfGetMessages &&
+            data.length === pageSize
+          ) {
+            chatService.getMessagesByPageSize(
+              conversation,
+              data[data.length - 1].id,
+              nextPageSize,
+              allData,
+              update,
+              messageReceiveStartTime
+            );
+          } else {
+            update(messageReceiveStartTime);
+          }
+        } else if (data && data.length === 0) {
+          update(messageReceiveStartTime);
+        }
+      });
+    },
+
+    multiGetLatestMessages(conversationIds, pageSize) {
+      const params = {
+        conversationIds,
+        pageSize
+      };
+      return httpService.httpGet(this.apiSets.multiGetLatestMessagesApi, params);
+    },
+
+    markAsRead(conversationId, endMessageId) {
+      const data = {
+        conversationId,
+        endMessageId
+      };
+      return httpService.httpPost(this.apiSets.markAsReadApi, data);
+    },
+
+    markAsSeen(conversationIdsToMarkRead) {
+      const data = {
+        conversationsToMarkSeen: conversationIdsToMarkRead
+      };
+      return httpService.httpPost(this.apiSets.markAsSeenApi, data);
+    },
+
+    sendMessage(conversationId, message) {
+      const data = {
+        conversationId,
+        message
+      };
+      return httpService.httpPost(this.apiSets.sendMessageApi, data, true);
+    },
+
+    renameGroupConversation(conversationId, newTitle) {
+      const data = {
+        conversationId,
+        newTitle
+      };
+      return httpService.httpPost(this.apiSets.renameGroupConversationApi, data);
+    },
+
+    updateUserTypingStatus(conversationId, isTyping) {
+      const data = {
+        conversationId,
+        isTyping
+      };
+      return httpService.httpPost(this.apiSets.updateUserTypingStatusApi, data);
+    },
+
+    sendPerformanceData(measureName, value) {
+      const data = {
+        featureName: 'Chat',
+        measureName,
+        value
+      };
+      return httpService.httpPost(this.apiSets.uiPerformanceTrackingApi, data);
+    }
+  };
+}
+
+chatModule.factory('chatService', chatService);
+
+export default chatService;
